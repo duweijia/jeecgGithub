@@ -1,0 +1,47 @@
+package com.dhc.api.controller;
+
+import java.util.Map;
+import java.util.HashMap;
+import com.dhc.api.Constant;
+import org.apache.log4j.Logger;
+import com.dhc.api.utils.HttpClient;
+import com.alibaba.druid.support.json.JSONUtils;
+
+public class Test {
+	
+	private static final Logger log = Logger.getLogger(Test.class);
+
+	private static final String ACCESS_TOKEN = "43127861-6b7a-428e-8c5e-1fa17d114a00";
+
+	public static void main(String[] args) {
+		log.info("query order list start...");
+		StringBuffer url = new StringBuffer();
+		url.append(Constant.QUERY_ORDER_LIST).append("?accesstoken=").append(ACCESS_TOKEN);
+		try {
+			// 组装获取微盟订单参数
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("pageNum", "1");
+			map.put("pageSize", "10");
+
+			Map<String, Object> parameter = new HashMap<String, Object>();
+//			parameter.put("createStartTime", "1597766400000");
+//			parameter.put("createEndTime", "1597852799000");
+			parameter.put("createStartTime", "2020-08-19 00:00:00");
+			parameter.put("createEndTime", "2020-08-19 23:59:59");
+			parameter.put("orderStatuses", new int[] { 1 });
+
+			map.put("queryParameter", parameter);
+
+			String json = JSONUtils.toJSONString(map);
+			// 调用微盟接口
+			HttpClient httpClient = new HttpClient(url.toString(), Constant.REQUEST_METHOD, Constant.CHARSET, 30, 30,
+					null);
+			String orderList = httpClient.send(json);
+
+			log.info("result:" + orderList);
+		} catch (Exception e) {
+			log.info("query order list is fail:" + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+}

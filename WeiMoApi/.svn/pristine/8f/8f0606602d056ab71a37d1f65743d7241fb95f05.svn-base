@@ -1,0 +1,63 @@
+package com.dhc.api.service.order;
+
+import java.util.Map;
+import java.util.HashMap;
+import com.dhc.api.Constant;
+import org.apache.log4j.Logger;
+import javax.annotation.Resource;
+import com.dhc.api.utils.HttpClient;
+import com.alibaba.fastjson.JSONObject;
+import org.springframework.stereotype.Service;
+import com.alibaba.druid.support.json.JSONUtils;
+
+
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+
+@Service("syncOrderService")
+public class SyncOrderServiceImpl implements SyncOrderService {
+
+	@Resource(name = "jdbcTemplate")
+	private NamedParameterJdbcTemplate jdbcTemplate;
+
+	private static final Logger log = Logger.getLogger(SyncOrderServiceImpl.class);
+
+	public void syncOrderList() {
+		log.info("query order list start...");
+		// 查询access_token令牌
+		String sql = "SELECT ACCESS_TOKEN FROM WM_TOKEN WHERE ID = (SELECT MAX(ID) FROM WM_TOKEN)";
+
+		String accessToken = jdbcTemplate.queryForObject(sql, new HashMap<String, Object>(), String.class);
+		log.info("access_token:" + accessToken);
+
+		StringBuffer url = new StringBuffer();
+		url.append(Constant.QUERY_ORDER_LIST).append("?accesstoken=").append(accessToken);
+
+		log.info("URI:" + url.toString());
+		
+		// 组装订单
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", "1");
+		map.put("pageSize", "10");
+
+		Map<String, Object> param = new HashMap<String, Object>();
+		param.put("createStartTime", "2020-08-19 00:00:00");
+		param.put("createEndTime", "2020-08-19 23:59:59");
+		param.put("orderStatuses", new int[] { 1 });
+
+		map.put("queryParameter", param);
+		try {
+			HttpClient httpClient = new HttpClient(url.toString(), Constant.REQUEST_METHOD, Constant.CHARSET, 30, 30,
+					null);
+			String result = httpClient.send(JSONUtils.toJSONString(map));
+			log.info("result:" + result);
+			analysisResult(result);
+		} catch (Exception e) {
+			log.info("sync weimo order fail...");
+			e.getStackTrace();
+		}
+	}
+
+	private void analysisResult(String result) {
+		JSONObject json = (JSONObject) JSONObject.parse(result);
+	}
+}

@@ -1,0 +1,19 @@
+log4j.rootLogger=info, s,D
+
+
+log4j.appender.s=org.apache.log4j.ConsoleAppender
+log4j.appender.s.Target=System.out
+log4j.appender.s.layout=org.apache.log4j.PatternLayout
+log4j.appender.s.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n
+
+
+log4j.appender.D = org.apache.log4j.DailyRollingFileAppender
+log4j.appender.D.File =${webapp.root}/logs/log.log
+log4j.appender.D.DatePattern = '_'yyyy-MM-dd'.log'
+log4j.appender.D.Append = true
+log4j.appender.D.Threshold = info 
+log4j.appender.D.layout = org.apache.log4j.PatternLayout
+log4j.appender.D.layout.ConversionPattern = %-d{yyyy-MM-dd HH:mm:ss}  [ %t:%r ] - [ %p ]  %m%n
+
+log4j.logger.java.sql.Connection=DEBUG
+log4j.logger.java.sql.PreparedStatement=DEBUG

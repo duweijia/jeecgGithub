@@ -1,0 +1,169 @@
+package com.dhc.api.service.order;
+
+import java.util.Map;
+import java.util.HashMap;
+import com.dhc.api.Constant;
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
+import org.apache.log4j.Logger;
+import javax.annotation.Resource;
+import com.dhc.api.utils.DateUtil;
+import com.dhc.api.utils.AmountUtil;
+import com.dhc.api.utils.HttpClient;
+import org.springframework.stereotype.Service;
+import com.alibaba.druid.support.json.JSONUtils;
+import org.springframework.transaction.annotation.Transactional;
+
+
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+
+@Service("syncOrderService")
+public class SyncOrderServiceImpl implements SyncOrderService {
+
+	@Resource(name = "jdbcTemplate")
+	private NamedParameterJdbcTemplate jdbcTemplate;
+	
+	public static final int PAGE_SIZE = 10;
+
+	private static final Logger log = Logger.getLogger(SyncOrderServiceImpl.class);
+
+	@Transactional
+	public void syncOrderList() {
+		log.info("query order list start...");
+		// 查询access_token令牌
+		String sql = "SELECT ACCESS_TOKEN FROM WM_TOKEN WHERE ID = (SELECT MAX(ID) FROM WM_TOKEN)";
+
+		String accessToken = jdbcTemplate.queryForObject(sql, new HashMap<String, Object>(), String.class);
+		log.info("access_token:" + accessToken);
+
+		StringBuffer url = new StringBuffer();
+		url.append(Constant.QUERY_ORDER_LIST).append("?accesstoken=").append(accessToken);
+
+		log.info("URI:" + url.toString());
+
+		int currentPage = 0;// 当前页码
+		while ((getOrdersList(++currentPage, PAGE_SIZE, url.toString())) == PAGE_SIZE) {
+
+		}
+	}
+
+	private int getOrdersList(int currentPage, int pageSize, String url) {
+		log.info("currentPage:" + currentPage + " ,pageSize:" + pageSize);
+		int orderCount = 0;
+		// 组装订单
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", currentPage);
+		map.put("pageSize", pageSize);
+
+		Map<String, Object> param = new HashMap<String, Object>();
+		param.put("createStartTime", "2020-08-14 00:00:00");
+		param.put("createEndTime", "2020-08-14 23:59:59");
+		param.put("orderStatuses", new int[] { 2 });
+
+		map.put("queryParameter", param);
+		try {
+			// 微盟API
+			HttpClient httpClient = new HttpClient(url.toString(), Constant.REQUEST_METHOD, Constant.CHARSET, 30, 30,
+					null);
+			String result = httpClient.send(JSONUtils.toJSONString(map));
+			log.info("result:" + result);
+
+			// 解析
+			JSONObject resultJson = JSONObject.fromObject(result);
+
+			JSONObject code = JSONObject.fromObject(resultJson.getString("code"));
+			String errCode = code.getString("errcode");
+			String errMsg = code.getString("errmsg");
+
+			log.info("errCode:" + errCode + " ,errMsg:" + errMsg);
+			if ("0".equals(errCode)) {
+				log.info("Query WeiMo OrderList is success ...");
+				JSONObject data = JSONObject.fromObject(resultJson.getString("data"));
+
+				String totalCount = data.getString("totalCount");
+				JSONArray pageArray = data.getJSONArray("pageList");
+
+				log.info("totalCount:" + totalCount + " ,pageArray.size()=:" + pageArray.size());
+
+				Map<String, Object> hashMap = new HashMap<String, Object>();
+				if (pageArray != null && pageArray.size() > 0) {
+					for (Object obj : pageArray) {
+						orderCount++;
+						// 获取WeiMo订单
+						JSONObject order = JSONObject.fromObject(obj);
+
+						JSONObject deliveryDetail = JSONObject.fromObject(order.getString("deliveryDetail"));
+						JSONObject logistics = JSONObject
+								.fromObject(deliveryDetail.getString("logisticsDeliveryDetail"));
+						// 邮编
+						String postCode = logistics.getString("receiverZip");
+						// 收货地址
+						String adddress = new StringBuffer().append(logistics.getString("receiverProvince"))
+								.append(logistics.getString("receiverCity"))
+								.append(logistics.getString("receiverCounty"))
+								.append(logistics.getString("receiverArea"))
+								.append(logistics.getString("receiverAddress")).toString();
+
+						log.info("orderNo:" + order.getString("orderNo"));
+						int count = jdbcTemplate
+								.queryForInt("SELECT COUNT(OUT_ORDER_NO) FROM WM_OUT_ORDERM WHERE OUT_ORDER_NO = '"
+										+ order.getString("orderNo") + "'", hashMap);
+						if (count < 1) {
+							// 订单插入WM_OUT_ORDERM
+							StringBuffer insertWmOrder = new StringBuffer();
+
+							insertWmOrder.append("INSERT INTO WM_OUT_ORDERM ( ")
+									.append("OUT_ORDER_NO, ORDER_DATE, PAY_DATE, ")
+									.append("ORDER_AMT, DELIVERY_AMT, RECEIVER_NAME, RECEIVER_TEL, ")
+									.append("RECEIVER_ADD, RECEIVER_POST, ORDER_TYPE, ORDER_STATES, ")
+									.append("INSERT_DATE, UPDATE_DATE").append(") values ( ")
+									.append("'" + order.getString("orderNo") + "',")
+									.append("to_date('"
+											+ DateUtil.stampToDate(Long.valueOf(order.getString("createTime")))
+											+ "','yyyy-mm-dd hh24:mi:ss'),")
+									.append("to_date('"
+											+ DateUtil.stampToDate(Long.valueOf(order.getString("paymentTime")))
+											+ "','yyyy-mm-dd hh24:mi:ss'),")
+									.append("'" + order.getString("paymentAmount") + "','"
+											+ order.getString("deliveryPaymentAmount") + "','"
+											+ order.getString("receiverName") + "','"
+											+ order.getString("receiverMobile") + "','" + adddress + "','" + postCode
+											+ "','01','10',sysdate,sysdate)");
+							log.info("insertWmOrder:" + insertWmOrder.toString());
+							jdbcTemplate.update(insertWmOrder.toString(), hashMap);
+
+							// 商品列表
+							JSONArray itemArr = order.getJSONArray("itemList");
+							if (itemArr != null && itemArr.size() > 0) {
+								for (Object item : itemArr) {
+									JSONObject good = JSONObject.fromObject(item);
+									log.info("skuCode:" + good.getString("skuCode") + " ,skuNum:"
+											+ good.getString("skuNum") + " ,skuAmount:" + good.getString("skuAmount"));
+
+									StringBuffer goodDetail = new StringBuffer();
+									goodDetail.append("INSERT INTO WM_OUT_ORDERDT ( ")
+											.append("OUT_ORDER_NO, GOODS_CODE, GOODS_CNT,GOODS_PRICE, GOODS_AMT) ")
+											.append("values ( ").append("'" + order.getString("orderNo") + "',")
+											.append("'" + good.getString("skuCode") + "',")
+											.append("'" + good.getString("skuNum") + "',")
+											.append("'" + good.getString("skuAmount") + "',")
+											.append("'" + AmountUtil.mul(Double.valueOf(good.getString("skuNum")),
+													Double.valueOf(good.getString("skuAmount"))) + "'")
+											.append(")");
+									log.info("goodDatail=" + goodDetail.toString());
+									jdbcTemplate.update(goodDetail.toString(), hashMap);
+								}
+							}
+						}
+					}
+				}
+			} else {
+				log.info("Query WeiMo orderList is fail and errMsg:" + errMsg);
+			}
+		} catch (Exception e) {
+			log.info("sync WeiMo order fail:" + e.getMessage());
+		}
+		log.info("orderCount:" + orderCount);
+		return orderCount;
+	}
+}

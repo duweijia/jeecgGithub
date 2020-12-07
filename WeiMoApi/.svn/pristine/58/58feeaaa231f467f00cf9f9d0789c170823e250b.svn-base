@@ -1,0 +1,18 @@
+package com.dhc.api.task;
+
+import javax.annotation.Resource;
+import org.springframework.stereotype.Component;
+import com.dhc.api.service.refresh.RefreshTokenService;
+import org.springframework.scheduling.annotation.Scheduled;
+
+@Component
+public class RefreshTokenTask {
+	
+	@Resource(name="refreshTokenService")
+	private RefreshTokenService refreshTokenService ;
+
+	@Scheduled(cron = "*/30 * * * * ?")
+	public void dualMemberSync() {
+		refreshTokenService.refreshAccessToken();
+	}
+}

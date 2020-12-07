@@ -1,0 +1,108 @@
+package com.dhc.api.service.deliver;
+
+import java.util.Map;
+import java.util.Date;
+import java.util.List;
+import java.util.HashMap;
+import com.dhc.api.Constant;
+import net.sf.json.JSONObject;
+import org.apache.log4j.Logger;
+import javax.annotation.Resource;
+import com.dhc.api.utils.DateUtil;
+import org.springframework.http.MediaType;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.stereotype.Service;
+import com.alibaba.druid.support.json.JSONUtils;
+import org.springframework.web.client.RestTemplate;
+import com.dhc.api.service.refresh.RefreshTokenService;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+
+@Service("deliverGoodService")
+public class DeliverGoodServiceImpl implements DeliverGoodService {
+
+	@Resource(name = "jdbcTemplate")
+	private NamedParameterJdbcTemplate jdbcTemplate;
+
+	@Resource(name = "refreshTokenService")
+	private RefreshTokenService refreshTokenService;
+
+	private static final Logger log = Logger.getLogger(DeliverGoodServiceImpl.class);
+
+	public void sendGoods() {
+		log.info("send order job is start...and startTime: " + DateUtil.formatNow("yyyy-MM-dd HH:mm:ss"));
+
+		// 查询access_token令牌
+		String sql = "SELECT ACCESS_TOKEN,TOKEN_EXPIRE_TIME FROM WM_TOKEN WHERE ID = (SELECT MAX(ID) FROM WM_TOKEN)";
+
+		Map<String, Object> data = jdbcTemplate.queryForMap(sql, new HashMap<String, Object>());
+		String accessToken = (String) data.get("ACCESS_TOKEN");
+		Date expireTime = (Date) data.get("TOKEN_EXPIRE_TIME");
+
+		log.info("access_token:" + accessToken + " ,expire_time:" + expireTime + " ,current_time:"
+				+ DateUtil.formatNow("yyyy-MM-dd HH:mm:ss"));
+
+		// 若access_token已过期,主动刷新access_token
+		if (expireTime.before(new Date())) {
+			accessToken = refreshTokenService.refreshAccessToken();
+		}
+
+		StringBuffer url = new StringBuffer();
+		url.append(Constant.SEND_GOODS).append("?accesstoken=").append(accessToken);
+
+		log.info("URI:" + url.toString());
+
+		// 查询未发货订单
+		String waitSql = "SELECT OUT_ORDER_NO,COURIER_NUMBER FROM WM_OUT_ORDERM WHERE COURIER_NUMBER IS NOT NULL AND SYNC_FLAG = '2' AND ORDER_STATUS = '30'";
+		log.info("waitSql:" + waitSql);
+
+		List<Map<String, Object>> queryForList = jdbcTemplate.queryForList(waitSql, new HashMap<String, Object>());
+		for (Map<String, Object> order : queryForList) {
+			log.info("orderNo:" + order.get("OUT_ORDER_NO") + " ,deliveryNo:" + order.get("COURIER_NUMBER"));
+
+			// 组装参数
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("orderNo", order.get("OUT_ORDER_NO"));
+			map.put("isNeedLogistics", true);
+			map.put("deliveryNo", order.get("COURIER_NUMBER"));
+			map.put("deliveryCompanyCode", "jd");
+			map.put("deliveryCompanyName", "京东物流");
+
+			log.info("request parameters{}:" + JSONUtils.toJSONString(map));
+
+			// 调用微盟API
+			RestTemplate restTemplate = new RestTemplate();
+			// 设置请求头为JSON格式
+			HttpHeaders headers = new HttpHeaders();
+			headers.setContentType(MediaType.APPLICATION_JSON);
+
+			HttpEntity<String> request = new HttpEntity<String>(JSONUtils.toJSONString(map), headers);
+			String result = restTemplate.postForObject(url.toString(), request, String.class);
+
+			log.info("result:" + result);
+
+			// 解析
+			JSONObject resultJson = JSONObject.fromObject(result);
+
+			JSONObject code = JSONObject.fromObject(resultJson.getString("code"));
+			String errCode = code.getString("errcode");
+			String errMsg = code.getString("errmsg");
+
+			log.info("errCode:" + errCode + " ,errMsg:" + errMsg);
+			if ("0".equals(errCode)) {
+
+			} else {
+				log.info("goods delivery is fail and msg:" + errMsg);
+
+				// 更新WM_OUT_ORDERM
+				StringBuffer buffer = new StringBuffer();
+				buffer.append("UPDATE WM_OUT_ORDERM SET REMARKS = '" + errMsg + "' WHERE OUT_ORDER_NO = '"
+						+ order.get("OUT_ORDER_NO") + "'");
+
+				log.info("bufferSQL:" + buffer.toString());
+
+				jdbcTemplate.update(buffer.toString(), new HashMap<String, Object>());
+			}
+		}
+	}
+}

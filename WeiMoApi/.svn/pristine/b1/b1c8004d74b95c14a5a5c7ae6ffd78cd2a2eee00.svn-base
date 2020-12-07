@@ -1,0 +1,29 @@
+package com.dhc.api.task;
+
+import javax.annotation.Resource;
+import org.springframework.stereotype.Component;
+import com.dhc.api.service.order.SyncOrderService;
+import com.dhc.api.service.refresh.RefreshTokenService;
+import org.springframework.scheduling.annotation.Scheduled;
+
+@Component
+public class RefreshTokenTask {
+	
+	@Resource(name="refreshTokenService")
+	private RefreshTokenService refreshTokenService ;
+	
+	@Resource(name="syncOrderService")
+	private SyncOrderService syncOrderService ;
+
+	// 刷新access_token
+//	@Scheduled(cron = "*/30 * * * * ?")
+	public void refreshToken() {
+		refreshTokenService.refreshAccessToken();
+	}
+
+	// 同步weimo订单
+	@Scheduled(cron = "*/60 * * * * ?")
+	public void syncOrder() {
+		syncOrderService.syncOrderList();
+	}
+}
